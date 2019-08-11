@@ -1,0 +1,190 @@
+---
+title: "Practical Machine Learning"
+subtitle: "Prediction Assignment Writeup"
+author: "Costas Fotopoulos"
+date: "August 11, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. Introduction
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: [http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har](http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har) (see the section on the Weight Lifting Exercise Dataset).
+
+
+## 2. Data loading and cleaning
+
+### 2.1 Data
+
+
+The training data for this project are available here:
+
+[pml-training.csv](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+
+
+The test data are available here:
+
+[pml-testing.csv](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+### 2.2 Libraries
+
+```{r libraries, message=FALSE, warning=FALSE}
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(randomForest)
+library(corrplot)
+library(gbm)
+set.seed(12345)
+```
+
+### 2.3 Data loading
+
+The next step is loading the dataset from the URL provided above.
+
+```{r data_loading}
+trainDataURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testDataURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+trainRowData <- read.csv(url(trainDataURL), header = TRUE)
+testRowData <- read.csv(url(testDataURL), header = TRUE)
+```
+
+### 2.4 Partitioning data
+
+The training dataset is then partinioned in 2 to create a Training set (70% of the data) for the modeling process and a Test set (with the remaining 30%) for the validations.
+
+```{r partitioning_data}
+inTrain <- createDataPartition(trainRowData$classe, p = 0.7, list = FALSE)
+trainData <- trainRowData[inTrain,]
+testData <- trainRowData[-inTrain,]
+dim(trainData)
+dim(testData)
+```
+
+Both datasets have 160 variables.
+
+### 2.5 Cleaning data
+
+The Near Zero Variance (NZV) variables can be removed with the cleaning procedures below:
+
+```{r remove_NZV}
+NZV <- nearZeroVar(trainData)
+trainData <- trainData[, -NZV]
+testData <- testData[, -NZV]
+```
+
+Variables that are mostly NA also removed:
+
+```{r remove_NAs}
+NAs <- sapply(trainData, function(x) mean(is.na(x))) > 0.95
+trainData <- trainData[, NAs == FALSE]
+testData <- testData[, NAs == FALSE]
+```
+
+Also remove identification only variables (columns 1 to 5):
+
+```{r remove_identification}
+trainData <- trainData[, -(1:5)]
+testData <- testData[, -(1:5)]
+dim(trainData)
+dim(testData)
+```
+
+With the cleaning process above, the number of variables for the analysis has been reduced to 54 only.
+
+## 3. Correlation Analysis
+
+A correlation among variables is analysed before proceeding to the modeling procedures.
+
+```{r correlatino_analysis, fig.align="center", fig.height=9}
+corMatrix <- cor(trainData[,-54])
+corrplot(corMatrix, order = "FPC", method = "color",
+         type = "lower", tl.cex = 0.8, tl.col = rgb(0,0,0))
+```
+
+The highly correlated variables are shown in dark colors. The correlations are quite few.
+
+## 4. Prediction model building
+
+Three methods will be applied to model the regressions (in the Train dataset) and the best one (with higher accuracy when applied to the Test dataset) will be used for the quiz predictions. The methods are:
+
+1. Radom Forest
+2. Decision Tree
+3. Generalized Boosted Model
+
+### 4.1 Radom Forest
+
+#### Model fit
+
+```{r RF_model_fit}
+set.seed(12345)
+ctrlRF <- trainControl(method = "cv", number = 3, verboseIter = FALSE)
+modFitRF <- train(classe ~ ., data = trainData, method = "rf",
+                  trControl = ctrlRF)
+modFitRF$finalModel
+```
+
+#### Prediction on Test dataset and Accuracy
+
+```{r RF_prediction}
+predictRF <- predict(modFitRF, newdata = testData)
+confMatRF <- confusionMatrix(predictRF, testData$classe)
+round(confMatRF$overall['Accuracy'], 4)
+```
+
+For this model **accuracy** is about **0.9964**
+
+### 4.2 Decision Trees
+
+#### Model fit
+
+```{r DT_model_fit, fig.align="center", fig.height=10, fig.width=10}
+set.seed(12345)
+modFitDT <- rpart(classe ~ ., data = trainData, method = "class")
+fancyRpartPlot(modFitDT)
+```
+
+#### Prediction on Test dataset and Accuracy
+
+```{r DT_prediction}
+predictDT <- predict(modFitDT, newdata =testData, type = "class")
+confMatDT <- confusionMatrix(predictDT, testData$classe)
+round(confMatDT$overall['Accuracy'], 4)
+```
+
+For this model **accuracy** is about **0.7368**
+
+### 4.3 Generalized Boosted Model
+
+#### Model fit
+
+```{r GBM_model_fit}
+set.seed(12345)
+ctrlGBM <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+modFitGBM <- train(classe ~ ., data = trainData, method = "gbm",
+                   trControl = ctrlGBM, verbose = FALSE)
+modFitGBM$finalModel
+```
+
+#### Prediction on Test dataset and Accuracy
+
+```{r GBM_predict}
+predictGBM <- predict(modFitGBM, newdata = testData)
+confMatGBM <- confusionMatrix(predictGBM, testData$classe)
+round(confMatGBM$overall['Accuracy'], 4)
+```
+
+For this model **accuracy** is about **0.9857**
+
+## 5. Applying best model to the test data
+The best model is Radom Forest (accuracy 0.9964) and will be applied to predict the 20 quiz results (testing dataset) as shown below:
+
+```{r predictTest}
+predictTest <- predict(modFitRF, newdata=testRowData)
+predictTest
+```
